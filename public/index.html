@@ -397,6 +397,7 @@
           serverSelect.appendChild(opt);
         });
         loadModels();
+        runAttestation();
       });
 
     serverSelect.addEventListener("change", loadModels);
@@ -523,6 +524,135 @@
       chatEl.innerHTML = "";
       input.focus();
     });
+    // --- Attestation panel ---
+    const teeBadge = document.getElementById("tee-badge");
+    const sidePanel = document.getElementById("side-panel");
+    const panelClose = document.getElementById("panel-close");
+    const panelServer = document.getElementById("panel-server");
+    const statusBanner = document.getElementById("status-banner");
+    const attestList = document.getElementById("attestation-list");
+    const verifyAgainBtn = document.getElementById("verify-again");
+
+    let panelOpen = false;
+
+    function togglePanel() {
+      panelOpen = !panelOpen;
+      sidePanel.classList.toggle("open", panelOpen);
+    }
+    teeBadge.addEventListener("click", togglePanel);
+    panelClose.addEventListener("click", togglePanel);
+
+    function renderAttestItem(title, description, passed, details, link) {
+      const stateClass = passed === true ? "pass" : passed === false ? "fail" : "na";
+      const icon = passed === true ? "\u2713" : passed === false ? "\u2717" : "\u2014";
+      const detailsHtml = details
+        .filter(d => d.value != null)
+        .map(d => `<div class="attest-detail"><span class="label">${d.label}</span><span class="value">${d.value}</span></div>`)
+        .join("");
+      const linkHtml = link ? `<div style="margin-top:10px"><a href="${link.url}" target="_blank">\u2197 ${link.text}</a></div>` : "";
+
+      return `<div class="attest-item">
+        <div class="attest-header" onclick="this.parentElement.classList.toggle('expanded')">
+          <div class="attest-icon ${stateClass}">${icon}</div>
+          <div class="attest-title">${title}</div>
+          <span class="attest-chevron">\u25B6</span>
+        </div>
+        <div class="attest-body">
+          <p>${description}</p>
+          ${detailsHtml}
+          ${linkHtml}
+        </div>
+      </div>`;
+    }
+
+    function renderAttestation(data) {
+      if (data.error && !data.checks) {
+        statusBanner.className = "status-banner failure";
+        statusBanner.textContent = "\u2717 " + (data.error || "Verification failed");
+        attestList.innerHTML = "";
+        return;
+      }
+
+      const allPassed = data.valid;
+      statusBanner.className = `status-banner ${allPassed ? "success" : "failure"}`;
+      statusBanner.textContent = allPassed ? "\u2713 All checks passed" : "\u2717 Some checks failed";
+
+      const c = data.checks;
+      const l = data.links;
+
+      attestList.innerHTML = [
+        renderAttestItem(
+          `Genuine ${c.cpu.platform || "TEE"} Machine`,
+          "This server runs inside a genuine trusted execution environment. The CPU attestation quote has been cryptographically verified against the hardware vendor\u2019s root of trust.",
+          c.cpu.passed,
+          [
+            { label: "Platform", value: c.cpu.platform },
+            { label: "TCB Status", value: c.cpu.tcbStatus },
+            { label: "MRTD", value: c.cpu.mrtd },
+          ],
+          { url: l.cpuQuote, text: "View raw attestation quote" }
+        ),
+        renderAttestItem(
+          "Verified Workload",
+          "The software running inside this TEE matches the expected, publicly auditable configuration. No unauthorized code modifications detected.",
+          c.workload.passed,
+          [
+            { label: "Status", value: c.workload.status },
+            { label: "Template", value: c.workload.templateName },
+          ],
+          { url: l.dockerCompose, text: "View docker-compose" }
+        ),
+        renderAttestItem(
+          "GPU Attestation",
+          "The NVIDIA GPU has been verified through NVIDIA\u2019s Remote Attestation Service. Secure boot is active and all firmware measurements are valid.",
+          c.gpu.passed,
+          [
+            { label: "GPU Model", value: c.gpu.model },
+            { label: "Secure Boot", value: c.gpu.secureBoot === true ? "Enabled" : c.gpu.secureBoot === false ? "Disabled" : null },
+          ],
+          { url: l.gpuAttestation, text: "View GPU attestation report" }
+        ),
+        renderAttestItem(
+          "Proof of Cloud",
+          "The machine\u2019s identity has been validated against a known cloud provider. This confirms the server is running on legitimate infrastructure, not a simulated environment.",
+          c.proofOfCloud.passed,
+          [],
+          null
+        ),
+      ].join("");
+    }
+
+    function setBadgeState(state) {
+      teeBadge.className = "tee-badge" + (state === "loading" ? " loading" : state === "error" ? " error" : "");
+      const textEl = teeBadge.querySelector(".tee-text");
+      if (state === "loading") textEl.textContent = "Verifying...";
+      else if (state === "error") textEl.textContent = "Verification Failed";
+      else textEl.textContent = "Verified Confidential";
+    }
+
+    async function runAttestation() {
+      const server = serverSelect.value;
+      if (!server) return;
+
+      setBadgeState("loading");
+      statusBanner.className = "status-banner loading";
+      statusBanner.textContent = "Verifying...";
+      attestList.innerHTML = "";
+      panelServer.textContent = server;
+
+      try {
+        const res = await fetch(`/api/attestation?server=${server}`);
+        const data = await res.json();
+        setBadgeState(data.valid ? "success" : "error");
+        renderAttestation(data);
+      } catch (err) {
+        setBadgeState("error");
+        renderAttestation({ error: err.message });
+      }
+    }
+
+    serverSelect.addEventListener("change", runAttestation);
+    verifyAgainBtn.addEventListener("click", runAttestation);
   </script>
 </body>
 </html>
