@@ -7,6 +7,11 @@ const path = require("path");
 
 const app = express();
 const PORT = 3000;
+const ATTEST_PORT = 29343;
+
+// Hoist ESM import — secretvm-verify is ESM-only, cache it at startup
+let checkSecretVm;
+import("secretvm-verify").then((m) => { checkSecretVm = m.checkSecretVm; });
 
 const SERVERS = {
   prod:   { url: "https://67.215.13.123:21434",              attestHost: "secretai-rytn.scrtlabs.com" },
@@ -37,16 +42,15 @@ app.get("/api/attestation", async (req, res) => {
   }
 
   try {
-    const { checkSecretVm } = await import("secretvm-verify");
+    // checkSecretVm(host, product, reloadAmdKds, checkProofOfCloud)
     const result = await checkSecretVm(server.attestHost, "", false, true);
 
-    const attestHost = server.attestHost;
-    const baseAttestUrl = `https://${attestHost}:29343`;
+    const baseAttestUrl = `https://${server.attestHost}:${ATTEST_PORT}`;
 
     const response = {
       valid: result.valid,
       server: key,
-      attestHost: attestHost,
+      attestHost: server.attestHost,
       attestationType: result.attestationType || "Unknown",
       checks: {
         cpu: {
