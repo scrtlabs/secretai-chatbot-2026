@@ -8,14 +8,30 @@ const path = require("path");
 const app = express();
 const PORT = 3000;
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "https://secretai-rytn.scrtlabs.com:21434";
+const SERVERS = {
+  prod:   { url: "https://67.215.13.123:21434",              attestHost: "secretai-rytn.scrtlabs.com" },
+  lambda: { url: "https://192.222.55.202:21434",             attestHost: "secretai-yyzz.scrtlabs.com" },
+  jedi:   { url: "https://secretai-jedi.scrtlabs.com:21434", attestHost: "secretai-jedi.scrtlabs.com" },
+};
+const DEFAULT_SERVER = "prod";
 const API_KEY = process.env.API_KEY || "";
+
+function getOllamaUrl(req) {
+  const key = req.query.server || req.body?.server || DEFAULT_SERVER;
+  const server = SERVERS[key] || SERVERS[DEFAULT_SERVER];
+  return server.url;
+}
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/models", (_req, res) => {
-  const url = new URL(`${OLLAMA_BASE_URL}/api/tags`);
+app.get("/api/servers", (_req, res) => {
+  res.json(Object.keys(SERVERS));
+});
+
+app.get("/api/models", (req, res) => {
+  const baseUrl = getOllamaUrl(req);
+  const url = new URL(`${baseUrl}/api/tags`);
   const options = {
     hostname: url.hostname,
     port: url.port,
@@ -41,7 +57,7 @@ app.get("/api/models", (_req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { model, messages } = req.body;
+  const { model, messages, think } = req.body;
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -54,13 +70,14 @@ app.post("/api/chat", async (req, res) => {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
 
-    const upstream = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    const baseUrl = getOllamaUrl(req);
+    const upstream = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, messages, stream: true }),
+      body: JSON.stringify({ model, messages, stream: true, ...(think && { think: true }) }),
       signal: controller.signal,
     });
 
