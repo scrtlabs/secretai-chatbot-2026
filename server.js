@@ -29,6 +29,60 @@ app.get("/api/servers", (_req, res) => {
   res.json(Object.keys(SERVERS));
 });
 
+app.get("/api/attestation", async (req, res) => {
+  const key = req.query.server || DEFAULT_SERVER;
+  const server = SERVERS[key];
+  if (!server) {
+    return res.status(400).json({ valid: false, error: "Unknown server" });
+  }
+
+  try {
+    const { checkSecretVm } = await import("secretvm-verify");
+    const result = await checkSecretVm(server.attestHost, "", false, true);
+
+    const attestHost = server.attestHost;
+    const baseAttestUrl = `https://${attestHost}:29343`;
+
+    const response = {
+      valid: result.valid,
+      server: key,
+      attestHost: attestHost,
+      attestationType: result.attestationType || "Unknown",
+      checks: {
+        cpu: {
+          passed: result.checks.cpu_quote_verified ?? null,
+          platform: result.attestationType === "SECRET-VM" ? (result.report.cpu_type || "TDX") : (result.attestationType || "Unknown"),
+          tcbStatus: result.report.tcb_status || null,
+          mrtd: result.report.mr_td ? (result.report.mr_td.substring(0, 8) + "..." + result.report.mr_td.slice(-4)) : null,
+        },
+        workload: {
+          passed: result.checks.workload_binding_verified ?? null,
+          status: result.report.workload?.status || null,
+          templateName: result.report.workload?.template_name || null,
+        },
+        gpu: {
+          passed: result.checks.gpu_quote_verified ?? null,
+          model: result.report.gpu_reports?.[0]?.model || null,
+          secureBoot: result.report.gpu_reports?.[0]?.secure_boot ?? null,
+        },
+        proofOfCloud: {
+          passed: result.checks.proof_of_cloud_verified ?? null,
+        },
+      },
+      links: {
+        cpuQuote: `${baseAttestUrl}/cpu`,
+        dockerCompose: `${baseAttestUrl}/docker-compose`,
+        gpuAttestation: `${baseAttestUrl}/gpu`,
+      },
+      errors: result.errors || [],
+    };
+
+    res.json(response);
+  } catch (err) {
+    res.status(502).json({ valid: false, error: err.message, server: key });
+  }
+});
+
 app.get("/api/models", (req, res) => {
   const baseUrl = getOllamaUrl(req);
   const url = new URL(`${baseUrl}/api/tags`);
