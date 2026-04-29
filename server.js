@@ -55,20 +55,26 @@ app.get("/api/attestation", async (req, res) => {
       checks: {
         cpu: {
           passed: result.checks.cpu_quote_verified ?? null,
-          platform: result.attestationType === "SECRET-VM" ? (result.report.cpu_type || "TDX") : (result.attestationType || "Unknown"),
-          tcbStatus: result.report.tcb_status || null,
-          mrtd: result.report.mr_td ? (result.report.mr_td.substring(0, 8) + "..." + result.report.mr_td.slice(-4)) : null,
+          platform: result.report.cpu_type || "Unknown",
+          product: result.report.cpu?.product || null,
+          measurement: result.report.cpu?.measurement
+            ? (result.report.cpu.measurement.substring(0, 8) + "..." + result.report.cpu.measurement.slice(-4))
+            : null,
         },
         workload: {
           passed: result.checks.workload_binding_verified ?? null,
           status: result.report.workload?.status || null,
           templateName: result.report.workload?.template_name || null,
         },
-        gpu: {
-          passed: result.checks.gpu_quote_verified ?? null,
-          model: result.report.gpu_reports?.[0]?.model || null,
-          secureBoot: result.report.gpu_reports?.[0]?.secure_boot ?? null,
-        },
+        gpu: (() => {
+          const gpus = result.report.gpu?.gpus;
+          const firstGpu = gpus ? Object.values(gpus)[0] : null;
+          return {
+            passed: result.checks.gpu_quote_verified ?? null,
+            model: firstGpu?.model || null,
+            secureBoot: firstGpu?.secure_boot ?? null,
+          };
+        })(),
         proofOfCloud: {
           passed: result.checks.proof_of_cloud_verified ?? null,
         },
