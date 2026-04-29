@@ -151,18 +151,209 @@
       padding: 6px 10px;
     }
     .response-content a { color: #e94560; }
+
+    /* Attestation badge */
+    .tee-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #10b981;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-left: auto;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .tee-badge:hover { background: rgba(16, 185, 129, 0.22); }
+    .tee-badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      flex-shrink: 0;
+    }
+    .tee-badge.loading .dot {
+      background: transparent;
+      border: 2px solid #10b981;
+      border-top-color: transparent;
+      animation: spin 0.8s linear infinite;
+    }
+    .tee-badge.error { border-color: rgba(239, 68, 68, 0.4); color: #ef4444; background: rgba(239, 68, 68, 0.12); }
+    .tee-badge.error .dot { background: #ef4444; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Main content wrapper */
+    .main-content {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    .chat-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    /* Side panel */
+    .side-panel {
+      width: 0;
+      overflow: hidden;
+      background: #22262c;
+      border-left: 1px solid hsla(0,0%,100%,.1);
+      transition: width 0.3s ease;
+      flex-shrink: 0;
+    }
+    .side-panel.open { width: 380px; }
+    .side-panel-inner {
+      width: 380px;
+      height: 100%;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid hsla(0,0%,100%,.1);
+    }
+    .panel-header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .panel-header h2 { font-size: 1.15rem; font-weight: 700; }
+    .panel-close-btn {
+      background: none;
+      border: none;
+      color: #6b6b7b;
+      font-size: 1.3rem;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .panel-close-btn:hover { color: #a0a0b0; }
+    .panel-server { font-size: 0.85rem; color: #6b6b7b; margin-top: 2px; }
+    .status-banner {
+      margin: 16px 24px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .status-banner.success { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25); }
+    .status-banner.failure { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25); }
+    .status-banner.loading { background: rgba(255,255,255,0.05); color: #a0a0b0; border: 1px solid hsla(0,0%,100%,.1); }
+    .verify-btn {
+      margin: 0 24px 16px;
+      padding: 10px;
+      background: transparent;
+      border: 1px solid hsla(0,0%,100%,.1);
+      border-radius: 8px;
+      color: #a0a0b0;
+      font-size: 0.85rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .verify-btn:hover { border-color: hsla(0,0%,100%,.2); color: #fff; }
+    .attestation-list { padding: 0 24px 24px; display: flex; flex-direction: column; gap: 8px; }
+    .attest-item {
+      border: 1px solid hsla(0,0%,100%,.08);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #1a1a2e;
+    }
+    .attest-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      cursor: pointer;
+    }
+    .attest-header:hover { background: rgba(255,255,255,0.03); }
+    .attest-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    .attest-icon.pass { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .attest-icon.fail { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .attest-icon.na { background: rgba(255,255,255,0.05); color: #6b6b7b; }
+    .attest-title { font-weight: 600; font-size: 0.9rem; flex: 1; }
+    .attest-chevron { color: #45455a; font-size: 0.8rem; transition: transform 0.2s; }
+    .attest-item.expanded .attest-chevron { transform: rotate(90deg); }
+    .attest-body {
+      padding: 0 16px 14px 56px;
+      font-size: 0.83rem;
+      color: #a0a0b0;
+      line-height: 1.6;
+      display: none;
+    }
+    .attest-item.expanded .attest-body { display: block; }
+    .attest-body p { margin-bottom: 8px; }
+    .attest-body a { color: #34d399; text-decoration: none; font-size: 0.8rem; }
+    .attest-body a:hover { text-decoration: underline; }
+    .attest-detail {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .attest-detail .label { color: #6b6b7b; }
+    .attest-detail .value { color: #ccc; font-family: monospace; font-size: 0.8rem; }
   </style>
 </head>
 <body>
   <header>
     <h1>Secret AI Chat</h1>
+    <select id="server-select"></select>
     <select id="model-select"></select>
+    <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
+      <input type="checkbox" id="think-toggle"> Thinking
+    </label>
     <button id="clear-btn" style="background: #333; padding: 8px 16px; font-size: 0.85rem;">Clear</button>
+    <div id="tee-badge" class="tee-badge">
+      <span class="dot"></span>
+      <span class="tee-text">Verified Confidential</span>
+    </div>
   </header>
-  <div id="chat"></div>
-  <div id="input-area">
-    <input type="text" id="message-input" placeholder="Type your message..." autocomplete="off">
-    <button id="send-btn">Send</button>
+  <div class="main-content">
+    <div class="chat-wrapper">
+      <div id="chat"></div>
+      <div id="input-area">
+        <input type="text" id="message-input" placeholder="Type your message..." autocomplete="off">
+        <button id="send-btn">Send</button>
+      </div>
+    </div>
+    <div id="side-panel" class="side-panel">
+      <div class="side-panel-inner">
+        <div class="panel-header">
+          <div class="panel-header-top">
+            <h2>Verification Center</h2>
+            <button id="panel-close" class="panel-close-btn">&times;</button>
+          </div>
+          <div id="panel-server" class="panel-server"></div>
+        </div>
+        <div id="status-banner" class="status-banner loading">Waiting...</div>
+        <button id="verify-again" class="verify-btn">&#x21bb; Verify Again</button>
+        <div id="attestation-list" class="attestation-list"></div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -171,19 +362,44 @@
     const sendBtn = document.getElementById("send-btn");
     const clearBtn = document.getElementById("clear-btn");
     const modelSelect = document.getElementById("model-select");
+    const serverSelect = document.getElementById("server-select");
 
     let messages = [];
 
-    fetch("/api/models")
-      .then((r) => r.json())
-      .then((models) => {
-        models.forEach((m) => {
-          const opt = document.createElement("option");
-          opt.value = m;
-          opt.textContent = m;
-          modelSelect.appendChild(opt);
+    function loadModels() {
+      modelSelect.innerHTML = '<option>Loading...</option>';
+      fetch(`/api/models?server=${serverSelect.value}`)
+        .then((r) => r.json())
+        .then((models) => {
+          modelSelect.innerHTML = "";
+          models.forEach((m) => {
+            const opt = document.createElement("option");
+            opt.value = m;
+            opt.textContent = m;
+            modelSelect.appendChild(opt);
+          });
+          if (models.length === 0) {
+            modelSelect.innerHTML = '<option>No models available</option>';
+          }
+        })
+        .catch(() => {
+          modelSelect.innerHTML = '<option>Failed to load</option>';
         });
+    }
+
+    fetch("/api/servers")
+      .then((r) => r.json())
+      .then((servers) => {
+        servers.forEach((s) => {
+          const opt = document.createElement("option");
+          opt.value = s;
+          opt.textContent = s;
+          serverSelect.appendChild(opt);
+        });
+        loadModels();
       });
+
+    serverSelect.addEventListener("change", loadModels);
 
     function addMessage(role, content) {
       const div = document.createElement("div");
@@ -234,6 +450,8 @@
           body: JSON.stringify({
             model: modelSelect.value,
             messages: messages,
+            server: serverSelect.value,
+            think: document.getElementById("think-toggle").checked,
           }),
         });
 
