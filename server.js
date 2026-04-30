@@ -18,24 +18,73 @@ const SERVERS = {
   lambda: { url: "https://192.222.55.202:21434",             attestHost: "secretai-yyzz.scrtlabs.com" },
   jedi:   { url: "https://secretai-jedi.scrtlabs.com:21434", attestHost: "secretai-jedi.scrtlabs.com" },
 };
-const DEFAULT_SERVER = "prod";
+const ENABLED_SERVERS = (process.env.SERVERS || Object.keys(SERVERS).join(","))
+  .split(",").map(s => s.trim()).filter(s => SERVERS[s]);
+const DEFAULT_SERVER = ENABLED_SERVERS[0] || "prod";
 const API_KEY = process.env.API_KEY || "";
 
-function getOllamaUrl(req) {
-  const key = req.query.server || req.body?.server || DEFAULT_SERVER;
-  const server = SERVERS[key] || SERVERS[DEFAULT_SERVER];
-  return server.url;
+// model → server key mapping, built on startup
+let modelServerMap = {};
+
+function fetchModelsFromServer(serverKey) {
+  const server = SERVERS[serverKey];
+  if (!server) return Promise.resolve([]);
+  const url = new URL(`${server.url}/api/tags`);
+  return new Promise((resolve) => {
+    const options = {
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: "GET",
+      headers: { Authorization: `Basic ${API_KEY}` },
+    };
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          const parsed = JSON.parse(data);
+          resolve(parsed.models.map((m) => m.name));
+        } catch {
+          resolve([]);
+        }
+      });
+    });
+    req.on("error", () => resolve([]));
+    req.end();
+  });
+}
+
+async function buildModelMap() {
+  const map = {};
+  for (const key of ENABLED_SERVERS) {
+    const models = await fetchModelsFromServer(key);
+    for (const model of models) {
+      if (!map[model]) map[model] = key;
+    }
+  }
+  modelServerMap = map;
+  console.log(`Discovered ${Object.keys(map).length} models across ${ENABLED_SERVERS.length} servers`);
+  return map;
+}
+
+function getServerForModel(model) {
+  return modelServerMap[model] || DEFAULT_SERVER;
 }
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/servers", (_req, res) => {
-  res.json(Object.keys(SERVERS));
+app.get("/api/models", async (_req, res) => {
+  if (Object.keys(modelServerMap).length === 0) {
+    await buildModelMap();
+  }
+  const models = Object.entries(modelServerMap).map(([name, server]) => ({ name, server }));
+  res.json(models);
 });
 
 app.get("/api/attestation", async (req, res) => {
-  const key = req.query.server || DEFAULT_SERVER;
+  const key = req.query.server || (req.query.model ? getServerForModel(req.query.model) : DEFAULT_SERVER);
   const server = SERVERS[key];
   if (!server) {
     return res.status(400).json({ valid: false, error: "Unknown server" });
@@ -66,11 +115,18 @@ app.get("/api/attestation", async (req, res) => {
           status: result.report.workload?.status || null,
           templateName: result.report.workload?.template_name || null,
         },
+        tlsBinding: {
+          passed: result.checks.tls_binding_verified ?? null,
+          fingerprint: result.report.tls_fingerprint
+            ? (result.report.tls_fingerprint.substring(0, 8) + "..." + result.report.tls_fingerprint.slice(-4))
+            : null,
+        },
         gpu: (() => {
           const gpus = result.report.gpu?.gpus;
           const firstGpu = gpus ? Object.values(gpus)[0] : null;
           return {
             passed: result.checks.gpu_quote_verified ?? null,
+            cpuBound: result.checks.gpu_binding_verified ?? null,
             model: firstGpu?.model || null,
             secureBoot: firstGpu?.secure_boot ?? null,
           };
@@ -93,33 +149,6 @@ app.get("/api/attestation", async (req, res) => {
   }
 });
 
-app.get("/api/models", (req, res) => {
-  const baseUrl = getOllamaUrl(req);
-  const url = new URL(`${baseUrl}/api/tags`);
-  const options = {
-    hostname: url.hostname,
-    port: url.port,
-    path: url.pathname,
-    method: "GET",
-    headers: { Authorization: `Basic ${API_KEY}` },
-  };
-  const proxyReq = https.request(options, (proxyRes) => {
-    let data = "";
-    proxyRes.on("data", (chunk) => (data += chunk));
-    proxyRes.on("end", () => {
-      try {
-        const parsed = JSON.parse(data);
-        const models = parsed.models.map((m) => m.name);
-        res.json(models);
-      } catch {
-        res.status(502).json([]);
-      }
-    });
-  });
-  proxyReq.on("error", () => res.status(502).json([]));
-  proxyReq.end();
-});
-
 app.post("/api/chat", async (req, res) => {
   const { model, messages, think } = req.body;
 
@@ -134,7 +163,8 @@ app.post("/api/chat", async (req, res) => {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
 
-    const baseUrl = getOllamaUrl(req);
+    const serverKey = getServerForModel(model);
+    const baseUrl = SERVERS[serverKey]?.url || SERVERS[DEFAULT_SERVER].url;
     const upstream = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: {
@@ -192,6 +222,8 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Secret AI Chat running at http://localhost:${PORT}`);
+  console.log(`Enabled servers: ${ENABLED_SERVERS.join(", ")}`);
+  await buildModelMap();
 });

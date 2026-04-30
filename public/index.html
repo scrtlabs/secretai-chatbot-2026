@@ -321,7 +321,6 @@
 <body>
   <header>
     <h1>Secret AI Chat</h1>
-    <select id="server-select"></select>
     <select id="model-select"></select>
     <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
       <input type="checkbox" id="think-toggle"> Thinking
@@ -362,45 +361,37 @@
     const sendBtn = document.getElementById("send-btn");
     const clearBtn = document.getElementById("clear-btn");
     const modelSelect = document.getElementById("model-select");
-    const serverSelect = document.getElementById("server-select");
 
     let messages = [];
+    let modelServerMap = {};
 
     function loadModels() {
-      modelSelect.innerHTML = '<option>Loading...</option>';
-      fetch(`/api/models?server=${serverSelect.value}`)
+      modelSelect.innerHTML = '<option>Loading models...</option>';
+      fetch("/api/models")
         .then((r) => r.json())
         .then((models) => {
           modelSelect.innerHTML = "";
+          modelServerMap = {};
           models.forEach((m) => {
+            modelServerMap[m.name] = m.server;
             const opt = document.createElement("option");
-            opt.value = m;
-            opt.textContent = m;
+            opt.value = m.name;
+            opt.textContent = m.name;
             modelSelect.appendChild(opt);
           });
           if (models.length === 0) {
             modelSelect.innerHTML = '<option>No models available</option>';
           }
+          runAttestation();
         })
         .catch(() => {
           modelSelect.innerHTML = '<option>Failed to load</option>';
         });
     }
 
-    fetch("/api/servers")
-      .then((r) => r.json())
-      .then((servers) => {
-        servers.forEach((s) => {
-          const opt = document.createElement("option");
-          opt.value = s;
-          opt.textContent = s;
-          serverSelect.appendChild(opt);
-        });
-        loadModels();
-        runAttestation();
-      });
+    loadModels();
 
-    serverSelect.addEventListener("change", loadModels);
+    modelSelect.addEventListener("change", runAttestation);
 
     function addMessage(role, content) {
       const div = document.createElement("div");
@@ -451,7 +442,6 @@
           body: JSON.stringify({
             model: modelSelect.value,
             messages: messages,
-            server: serverSelect.value,
             think: document.getElementById("think-toggle").checked,
           }),
         });
@@ -542,9 +532,10 @@
     teeBadge.addEventListener("click", togglePanel);
     panelClose.addEventListener("click", togglePanel);
 
-    function renderAttestItem(title, description, passed, details, link) {
+    function renderAttestItem(title, descriptions, passed, details, link) {
       const stateClass = passed === true ? "pass" : passed === false ? "fail" : "na";
       const icon = passed === true ? "\u2713" : passed === false ? "\u2717" : "\u2014";
+      const description = passed === false ? (descriptions.fail || descriptions.pass) : descriptions.pass;
       const detailsHtml = details
         .filter(d => d.value != null)
         .map(d => `<div class="attest-detail"><span class="label">${d.label}</span><span class="value">${d.value}</span></div>`)
@@ -583,7 +574,10 @@
       attestList.innerHTML = [
         renderAttestItem(
           `Genuine ${c.cpu.platform || "TEE"} Machine`,
-          "This server runs inside a genuine trusted execution environment. The CPU attestation quote has been cryptographically verified against the hardware vendor\u2019s root of trust.",
+          {
+            pass: "This server runs inside a genuine trusted execution environment. The CPU attestation quote has been cryptographically verified against the hardware vendor\u2019s root of trust.",
+            fail: "CPU attestation could not be verified. The hardware may not be running inside a genuine trusted execution environment.",
+          },
           c.cpu.passed,
           [
             { label: "Platform", value: c.cpu.platform },
@@ -594,7 +588,10 @@
         ),
         renderAttestItem(
           "Verified Workload",
-          "The software running inside this TEE matches the expected, publicly auditable configuration. No unauthorized code modifications detected.",
+          {
+            pass: "The software running inside this TEE matches the expected, publicly auditable configuration. No unauthorized code modifications detected.",
+            fail: "Workload verification failed. The software running inside the TEE could not be confirmed to match the expected configuration.",
+          },
           c.workload.passed,
           [
             { label: "Status", value: c.workload.status },
@@ -603,18 +600,37 @@
           { url: l.dockerCompose, text: "View docker-compose" }
         ),
         renderAttestItem(
+          "TLS Binding",
+          {
+            pass: "The TLS certificate presented by this server is cryptographically bound to the CPU attestation quote. This ensures you are communicating directly with the attested TEE, with no middleman.",
+            fail: "TLS binding could not be verified. The connection to this server may not be bound to the attested environment.",
+          },
+          c.tlsBinding.passed,
+          [
+            { label: "TLS Fingerprint", value: c.tlsBinding.fingerprint },
+          ],
+          null
+        ),
+        renderAttestItem(
           "GPU Attestation",
-          "The NVIDIA GPU has been verified through NVIDIA\u2019s Remote Attestation Service. Secure boot is active and all firmware measurements are valid.",
+          {
+            pass: "The NVIDIA GPU has been verified through NVIDIA\u2019s Remote Attestation Service. Secure boot is active and all firmware measurements are valid. Verified GPU and CPU attestation binding through report_data.",
+            fail: "GPU attestation could not be verified. The GPU\u2019s integrity could not be confirmed through NVIDIA\u2019s Remote Attestation Service.",
+          },
           c.gpu.passed,
           [
             { label: "GPU Model", value: c.gpu.model },
             { label: "Secure Boot", value: c.gpu.secureBoot === true ? "Enabled" : c.gpu.secureBoot === false ? "Disabled" : null },
+            { label: "CPU Binding", value: c.gpu.cpuBound === true ? "Verified" : c.gpu.cpuBound === false ? "Failed" : null },
           ],
           { url: l.gpuAttestation, text: "View GPU attestation report" }
         ),
         renderAttestItem(
           "Proof of Cloud",
-          "The machine\u2019s identity has been validated against a known cloud provider. This confirms the server is running on legitimate infrastructure, not a simulated environment.",
+          {
+            pass: "The machine\u2019s identity has been validated against a known cloud provider. This confirms the server is running on legitimate infrastructure, not a simulated environment.",
+            fail: "Proof of Cloud could not be validated. The machine\u2019s cloud provider identity could not be confirmed.",
+          },
           c.proofOfCloud.passed,
           [],
           null
@@ -631,14 +647,15 @@
     }
 
     async function runAttestation() {
-      const server = serverSelect.value;
+      const model = modelSelect.value;
+      const server = modelServerMap[model];
       if (!server) return;
 
       setBadgeState("loading");
       statusBanner.className = "status-banner loading";
       statusBanner.textContent = "Verifying...";
       attestList.innerHTML = "";
-      panelServer.textContent = server;
+      panelServer.textContent = `${model} on ${server}`;
 
       try {
         const res = await fetch(`/api/attestation?server=${server}`);
@@ -651,7 +668,6 @@
       }
     }
 
-    serverSelect.addEventListener("change", runAttestation);
     verifyAgainBtn.addEventListener("click", runAttestation);
   </script>
 </body>
