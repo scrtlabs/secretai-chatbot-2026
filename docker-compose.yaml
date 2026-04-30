@@ -3,7 +3,52 @@ services:
     build: .
     container_name: secretai-chatbot
     ports:
-      - "3000:3000"
+      - '3000'
     env_file:
       - .env
     restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.chatbot.rule=Host(`$DOMAIN_NAME`)
+      - traefik.http.routers.chatbot.entrypoints=websecure
+      - traefik.http.routers.chatbot.tls=true
+      - traefik.http.services.chatbot.loadbalancer.server.port=3000
+  traefik:
+    image: traefik:v2.10
+    command:
+      - --api.insecure=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls.options=default@file
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/secure/cert:/certs:ro
+    networks:
+      - traefik
+    configs:
+      - source: tls_config
+        target: /etc/traefik/dynamic/tls.yml
+networks:
+  traefik:
+    driver: bridge
+configs:
+  tls_config:
+    content: |-
+      tls:
+        certificates:
+          - certFile: /certs/secret_vm_fullchain.pem
+            keyFile: /certs/secret_vm_private.pem
+        stores:
+          default:
+            defaultCertificate:
+              certFile: /certs/secret_vm_fullchain.pem
+              keyFile: /certs/secret_vm_private.pem
