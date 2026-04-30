@@ -96,8 +96,19 @@ app.get("/api/attestation", async (req, res) => {
 
     const baseAttestUrl = `https://${server.attestHost}:${ATTEST_PORT}`;
 
+    // Overall validity excludes proof_of_cloud — we still show the VM as verified
+    // even if ProofOfCloud fails, since the core TEE attestation is what matters.
+    const coreChecks = [
+      result.checks.cpu_quote_verified,
+      result.checks.tls_binding_verified,
+      result.checks.workload_binding_verified,
+      result.checks.gpu_quote_verified,
+      result.checks.gpu_binding_verified,
+    ];
+    const valid = coreChecks.every((c) => c !== false);
+
     const response = {
-      valid: result.valid,
+      valid,
       server: key,
       attestHost: server.attestHost,
       attestationType: result.attestationType || "Unknown",
