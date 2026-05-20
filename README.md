@@ -90,8 +90,18 @@ This is required because the [`secretvm-verify`](https://github.com/scrtlabs/sec
 The browser performs **no cryptographic verification of its own.** Its responsibilities are:
 
 - Call `GET /api/attestation` whenever the user selects a model
-- Render the JSON returned by the backend as four expandable items (CPU, Workload, TLS Binding, GPU, Proof of Cloud)
+- Render the JSON returned by the backend as five expandable items (CPU, Workload, TLS Binding, GPU, Proof of Cloud)
 - Maintain the open/closed state of the side panel and the loading/success/error state of the header badge
+
+The entire Verification Center UI lives in the single `public/index.html` file:
+
+- **HTML structure** — the `<div id="side-panel">` block contains the panel header, status banner, "Verify Again" button, the `<div id="attestation-list">` placeholder where items are rendered, and the footer link. The "Verified Confidential" badge sits in the header bar.
+- **CSS** — all styles are in the inline `<style>` block. Relevant classes: `.tee-badge` (header pill with loading/error states + spin animation), `.side-panel` / `.side-panel-inner` (the slide-in drawer with `width` transition), `.status-banner` (success/failure/loading), `.attest-item` / `.attest-header` / `.attest-body` (each expandable row), `.attest-icon.pass|.fail|.na` (the green / red / grey state icons), `.panel-footer` (the secretvm-verify attribution).
+- **JavaScript** — in the inline `<script>` block:
+  - `runAttestation()` fires the `GET /api/attestation` request when the model selection changes or "Verify Again" is clicked
+  - `setBadgeState(state)` updates the header badge classes/text for loading/success/error
+  - `renderAttestation(data)` populates the status banner and rebuilds `#attestation-list` from the JSON
+  - `renderAttestItem(title, descriptions, passed, details, link)` returns the HTML string for one expandable row. It branches the icon and copy between three states (`passed === true` → green ✓, `passed === false` → red ✗, `passed === null` → grey em-dash with the `na` description) and toggles the `.expanded` class via inline `onclick`
 
 This means **the browser trusts the server's verification result.** If you want a stronger trust model where the user's own machine performs the verification, you would need to either build a WASM port of the verification logic or send the raw attestation quote + certificate chain to the browser and verify it there with WebCrypto. Neither is implemented.
 

@@ -316,6 +316,16 @@
     }
     .attest-detail .label { color: #6b6b7b; }
     .attest-detail .value { color: #ccc; font-family: monospace; font-size: 0.8rem; }
+    .panel-footer {
+      margin-top: auto;
+      padding: 16px 24px 20px;
+      font-size: 0.75rem;
+      color: #6b6b7b;
+      text-align: center;
+      border-top: 1px solid hsla(0,0%,100%,.06);
+    }
+    .panel-footer a { color: #8a8aa0; text-decoration: none; }
+    .panel-footer a:hover { color: #34d399; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -352,6 +362,9 @@
         <div id="status-banner" class="status-banner loading">Waiting...</div>
         <button id="verify-again" class="verify-btn">&#x21bb; Verify Again</button>
         <div id="attestation-list" class="attestation-list"></div>
+        <div class="panel-footer">
+          Validated by <a href="https://github.com/scrtlabs/secretvm-verify" target="_blank" rel="noopener">secretvm-verify</a>
+        </div>
       </div>
     </div>
   </div>
