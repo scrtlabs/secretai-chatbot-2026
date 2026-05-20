@@ -18,8 +18,25 @@ const SERVERS = {
   lambda: { url: "https://192.222.55.202:21434",             attestHost: "secretai-yyzz.scrtlabs.com" },
   jedi:   { url: "https://secretai-jedi.scrtlabs.com:21434", attestHost: "secretai-jedi.scrtlabs.com" },
 };
-const ENABLED_SERVERS = (process.env.SERVERS || Object.keys(SERVERS).join(","))
-  .split(",").map(s => s.trim()).filter(s => SERVERS[s]);
+
+// EXTRA_SERVERS: comma-separated URLs added at startup
+(process.env.EXTRA_SERVERS || "").split(",").map(s => s.trim()).filter(Boolean).forEach((urlStr, i) => {
+  try {
+    const u = new URL(urlStr);
+    SERVERS[`extra-${i + 1}`] = { url: urlStr, attestHost: u.hostname };
+  } catch {
+    console.warn(`Skipping invalid EXTRA_SERVERS entry: ${urlStr}`);
+  }
+});
+
+const ENABLED_SERVERS = (process.env.SERVERS
+  ? process.env.SERVERS.split(",").map(s => s.trim()).filter(s => SERVERS[s])
+  : Object.keys(SERVERS));
+if (process.env.EXTRA_SERVERS) {
+  for (const k of Object.keys(SERVERS)) {
+    if (k.startsWith("extra-") && !ENABLED_SERVERS.includes(k)) ENABLED_SERVERS.push(k);
+  }
+}
 const DEFAULT_SERVER = ENABLED_SERVERS[0] || "prod";
 const API_KEY = process.env.API_KEY || "";
 
@@ -83,9 +100,48 @@ app.get("/api/models", async (_req, res) => {
   res.json(models);
 });
 
+function fetchModelsFromUrl(urlStr) {
+  return new Promise((resolve) => {
+    let url;
+    try { url = new URL(`${urlStr.replace(/\/$/, "")}/api/tags`); } catch { return resolve([]); }
+    const lib = url.protocol === "http:" ? require("http") : https;
+    const options = {
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: "GET",
+      headers: { Authorization: `Basic ${API_KEY}` },
+    };
+    const req = lib.request(options, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try { resolve(JSON.parse(data).models.map((m) => m.name)); } catch { resolve([]); }
+      });
+    });
+    req.on("error", () => resolve([]));
+    req.end();
+  });
+}
+
+app.get("/api/proxy-models", async (req, res) => {
+  const urlStr = req.query.url;
+  if (!urlStr || !/^https?:\/\//.test(urlStr)) {
+    return res.status(400).json({ error: "Invalid URL — must be http:// or https://" });
+  }
+  const models = await fetchModelsFromUrl(urlStr);
+  res.json(models);
+});
+
 app.get("/api/attestation", async (req, res) => {
-  const key = req.query.server || (req.query.model ? getServerForModel(req.query.model) : DEFAULT_SERVER);
-  const server = SERVERS[key];
+  let server, key;
+  if (req.query.host) {
+    server = { url: null, attestHost: req.query.host };
+    key = req.query.host;
+  } else {
+    key = req.query.server || (req.query.model ? getServerForModel(req.query.model) : DEFAULT_SERVER);
+    server = SERVERS[key];
+  }
   if (!server) {
     return res.status(400).json({ valid: false, error: "Unknown server" });
   }
@@ -96,8 +152,8 @@ app.get("/api/attestation", async (req, res) => {
 
     const baseAttestUrl = `https://${server.attestHost}:${ATTEST_PORT}`;
 
-    // Overall validity excludes proof_of_cloud — we still show the VM as verified
-    // even if ProofOfCloud fails, since the core TEE attestation is what matters.
+    // Overall validity excludes proof_of_cloud (advisory) and absent GPU checks.
+    // A check counts as failed only if explicitly false; missing == not applicable.
     const coreChecks = [
       result.checks.cpu_quote_verified,
       result.checks.tls_binding_verified,
@@ -115,7 +171,7 @@ app.get("/api/attestation", async (req, res) => {
       checks: {
         cpu: {
           passed: result.checks.cpu_quote_verified ?? null,
-          platform: result.report.cpu_type || "Unknown",
+          platform: ({ "TDX": "Intel TDX", "SEV-SNP": "AMD SEV-SNP" })[result.report.cpu_type] || result.report.cpu_type || "Unknown",
           product: result.report.cpu?.product || null,
           measurement: result.report.cpu?.measurement
             ? (result.report.cpu.measurement.substring(0, 8) + "..." + result.report.cpu.measurement.slice(-4))
@@ -135,7 +191,9 @@ app.get("/api/attestation", async (req, res) => {
         gpu: (() => {
           const gpus = result.report.gpu?.gpus;
           const firstGpu = gpus ? Object.values(gpus)[0] : null;
+          const present = "gpu_quote_verified" in result.checks;
           return {
+            present,
             passed: result.checks.gpu_quote_verified ?? null,
             cpuBound: result.checks.gpu_binding_verified ?? null,
             model: firstGpu?.model || null,
@@ -161,7 +219,7 @@ app.get("/api/attestation", async (req, res) => {
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { model, messages, think } = req.body;
+  const { model, messages, think, serverUrl } = req.body;
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -174,8 +232,13 @@ app.post("/api/chat", async (req, res) => {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
 
-    const serverKey = getServerForModel(model);
-    const baseUrl = SERVERS[serverKey]?.url || SERVERS[DEFAULT_SERVER].url;
+    let baseUrl;
+    if (serverUrl && /^https?:\/\//.test(serverUrl)) {
+      baseUrl = serverUrl;
+    } else {
+      const serverKey = getServerForModel(model);
+      baseUrl = SERVERS[serverKey]?.url || SERVERS[DEFAULT_SERVER].url;
+    }
     const upstream = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: {

@@ -322,6 +322,7 @@
   <header>
     <h1>Secret AI Chat</h1>
     <select id="model-select"></select>
+    <button id="add-server-btn" style="background: #333; padding: 8px 12px; font-size: 0.85rem;" title="Add a custom server URL">+ Server</button>
     <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer;">
       <input type="checkbox" id="think-toggle"> Thinking
     </label>
@@ -363,35 +364,96 @@
     const modelSelect = document.getElementById("model-select");
 
     let messages = [];
+    // modelServerMap[name] = { server: <key> } for configured servers,
+    //                       { serverUrl: <url> } for user-added URLs
     let modelServerMap = {};
 
-    function loadModels() {
+    function getExtraServers() {
+      try { return JSON.parse(localStorage.getItem("extraServers") || "[]"); }
+      catch { return []; }
+    }
+    function setExtraServers(list) {
+      localStorage.setItem("extraServers", JSON.stringify(list));
+    }
+
+    async function loadModels() {
       modelSelect.innerHTML = '<option>Loading models...</option>';
-      fetch("/api/models")
-        .then((r) => r.json())
-        .then((models) => {
-          modelSelect.innerHTML = "";
-          modelServerMap = {};
-          models.forEach((m) => {
-            modelServerMap[m.name] = m.server;
-            const opt = document.createElement("option");
-            opt.value = m.name;
-            opt.textContent = m.name;
-            modelSelect.appendChild(opt);
-          });
-          if (models.length === 0) {
-            modelSelect.innerHTML = '<option>No models available</option>';
+      modelServerMap = {};
+
+      try {
+        const configured = await fetch("/api/models").then((r) => r.json());
+        configured.forEach((m) => { modelServerMap[m.name] = { server: m.server }; });
+      } catch {
+        modelSelect.innerHTML = '<option>Failed to load</option>';
+        return;
+      }
+
+      // Pull user-added URLs in parallel
+      const extras = getExtraServers();
+      await Promise.all(extras.map(async (url) => {
+        try {
+          const models = await fetch(`/api/proxy-models?url=${encodeURIComponent(url)}`).then((r) => r.json());
+          if (Array.isArray(models)) {
+            models.forEach((name) => {
+              if (!modelServerMap[name]) modelServerMap[name] = { serverUrl: url };
+            });
           }
-          runAttestation();
-        })
-        .catch(() => {
-          modelSelect.innerHTML = '<option>Failed to load</option>';
+        } catch (err) {
+          console.warn(`Failed to load models from ${url}:`, err);
+        }
+      }));
+
+      modelSelect.innerHTML = "";
+      const names = Object.keys(modelServerMap);
+      if (names.length === 0) {
+        modelSelect.innerHTML = '<option>No models available</option>';
+      } else {
+        names.forEach((name) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          const info = modelServerMap[name];
+          opt.textContent = info.serverUrl ? `${name}  (${new URL(info.serverUrl).hostname})` : name;
+          modelSelect.appendChild(opt);
         });
+      }
+      runAttestation();
     }
 
     loadModels();
 
     modelSelect.addEventListener("change", runAttestation);
+
+    document.getElementById("add-server-btn").addEventListener("click", () => {
+      const existing = getExtraServers();
+      const promptText = existing.length
+        ? `Current custom servers:\n${existing.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\nEnter URL to add (e.g., https://my-vm.com:21434), or "remove N" to remove:`
+        : "Enter server URL (e.g., https://my-vm.com:21434):";
+      const input = prompt(promptText);
+      if (!input) return;
+
+      const removeMatch = input.trim().match(/^remove\s+(\d+)$/i);
+      if (removeMatch) {
+        const idx = parseInt(removeMatch[1], 10) - 1;
+        if (idx >= 0 && idx < existing.length) {
+          existing.splice(idx, 1);
+          setExtraServers(existing);
+          loadModels();
+        }
+        return;
+      }
+
+      if (!/^https?:\/\//.test(input)) {
+        alert("URL must start with http:// or https://");
+        return;
+      }
+      try { new URL(input); } catch { alert("Invalid URL"); return; }
+
+      if (!existing.includes(input)) {
+        existing.push(input);
+        setExtraServers(existing);
+        loadModels();
+      }
+    });
 
     function addMessage(role, content) {
       const div = document.createElement("div");
@@ -436,6 +498,7 @@
       typing.classList.add("typing");
 
       try {
+        const info = modelServerMap[modelSelect.value] || {};
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -443,6 +506,7 @@
             model: modelSelect.value,
             messages: messages,
             think: document.getElementById("think-toggle").checked,
+            ...(info.serverUrl ? { serverUrl: info.serverUrl } : {}),
           }),
         });
 
@@ -535,7 +599,11 @@
     function renderAttestItem(title, descriptions, passed, details, link) {
       const stateClass = passed === true ? "pass" : passed === false ? "fail" : "na";
       const icon = passed === true ? "\u2713" : passed === false ? "\u2717" : "\u2014";
-      const description = passed === false ? (descriptions.fail || descriptions.pass) : descriptions.pass;
+      const description = passed === null
+        ? (descriptions.na || descriptions.pass)
+        : passed === false
+          ? (descriptions.fail || descriptions.pass)
+          : descriptions.pass;
       const detailsHtml = details
         .filter(d => d.value != null)
         .map(d => `<div class="attest-detail"><span class="label">${d.label}</span><span class="value">${d.value}</span></div>`)
@@ -616,14 +684,15 @@
           {
             pass: "The NVIDIA GPU has been verified through NVIDIA\u2019s Remote Attestation Service. Secure boot is active and all firmware measurements are valid. Verified GPU and CPU attestation binding through report_data.",
             fail: "GPU attestation could not be verified. The GPU\u2019s integrity could not be confirmed through NVIDIA\u2019s Remote Attestation Service.",
+            na: "There is no GPU present on this machine.",
           },
-          c.gpu.passed,
-          [
+          c.gpu.present === false ? null : c.gpu.passed,
+          c.gpu.present === false ? [] : [
             { label: "GPU Model", value: c.gpu.model },
             { label: "Secure Boot", value: c.gpu.secureBoot === true ? "Enabled" : c.gpu.secureBoot === false ? "Disabled" : null },
             { label: "CPU Binding", value: c.gpu.cpuBound === true ? "Verified" : c.gpu.cpuBound === false ? "Failed" : null },
           ],
-          { url: l.gpuAttestation, text: "View GPU attestation report" }
+          c.gpu.present === false ? null : { url: l.gpuAttestation, text: "View GPU attestation report" }
         ),
         renderAttestItem(
           "Proof of Cloud",
@@ -648,17 +717,27 @@
 
     async function runAttestation() {
       const model = modelSelect.value;
-      const server = modelServerMap[model];
-      if (!server) return;
+      const info = modelServerMap[model];
+      if (!info) return;
+
+      let attestQuery, label;
+      if (info.serverUrl) {
+        const host = new URL(info.serverUrl).hostname;
+        attestQuery = `host=${encodeURIComponent(host)}`;
+        label = `${model} on ${host}`;
+      } else {
+        attestQuery = `server=${encodeURIComponent(info.server)}`;
+        label = `${model} on ${info.server}`;
+      }
 
       setBadgeState("loading");
       statusBanner.className = "status-banner loading";
       statusBanner.textContent = "Verifying...";
       attestList.innerHTML = "";
-      panelServer.textContent = `${model} on ${server}`;
+      panelServer.textContent = label;
 
       try {
-        const res = await fetch(`/api/attestation?server=${server}`);
+        const res = await fetch(`/api/attestation?${attestQuery}`);
         const data = await res.json();
         setBadgeState(data.valid ? "success" : "error");
         renderAttestation(data);
