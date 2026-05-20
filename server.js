@@ -93,9 +93,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/models", async (_req, res) => {
-  if (Object.keys(modelServerMap).length === 0) {
-    await buildModelMap();
-  }
+  await buildModelMap();
   const models = Object.entries(modelServerMap).map(([name, server]) => ({ name, server }));
   res.json(models);
 });
@@ -245,7 +243,7 @@ app.post("/api/chat", async (req, res) => {
         Authorization: `Basic ${API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, messages, stream: true, ...(think && { think: true }) }),
+      body: JSON.stringify({ model, messages, stream: true, think: !!think }),
       signal: controller.signal,
     });
 
