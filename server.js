@@ -211,7 +211,7 @@ function trailingPartial(s, from, tag) {
 function makeThinkSplitter() {
   let inThink = false;
   let carry = "";
-  return function (text) {
+  const splitter = function (text) {
     let s = carry + text;
     carry = "";
     let content = "";
@@ -244,6 +244,15 @@ function makeThinkSplitter() {
     }
     return { content, thinking };
   };
+  // Drain any held-back partial-tag bytes at end of stream. Whatever remains is
+  // real text, not a tag: route it by the current think state so trailing
+  // characters that merely *looked* like the start of a tag aren't lost.
+  splitter.flush = function () {
+    const out = inThink ? { content: "", thinking: carry } : { content: carry, thinking: "" };
+    carry = "";
+    return out;
+  };
+  return splitter;
 }
 
 app.post("/api/chat", async (req, res) => {
@@ -291,6 +300,9 @@ app.post("/api/chat", async (req, res) => {
 
     const finish = () => {
       if (!res.writableEnded) {
+        const rem = splitThink.flush();
+        if (rem.content) res.write(`data: ${JSON.stringify({ content: rem.content })}\n\n`);
+        if (rem.thinking && showThinking) res.write(`data: ${JSON.stringify({ thinking: rem.thinking })}\n\n`);
         res.write("data: [DONE]\n\n");
         res.end();
       }
@@ -327,10 +339,7 @@ app.post("/api/chat", async (req, res) => {
       }
     }
 
-    if (!res.writableEnded) {
-      res.write("data: [DONE]\n\n");
-      res.end();
-    }
+    finish();
   } catch (err) {
     if (err.name !== "AbortError") {
       res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
