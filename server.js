@@ -295,6 +295,10 @@ app.post("/api/chat", async (req, res) => {
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
     const splitThink = makeThinkSplitter();
+    // In the OpenAI-compatible dialect there is no reliable cross-backend knob
+    // to disable reasoning generation (Ollama's /v1 ignores `think` and errors
+    // on `reasoning_effort`; reasoning models reason by default). So `think`
+    // gates DISPLAY only — whether reasoning is forwarded to the client.
     const showThinking = !!think;
     let buffer = "";
 
