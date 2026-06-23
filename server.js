@@ -6,7 +6,7 @@ const https = require("https");
 const path = require("path");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const ATTEST_PORT = 29343;
 
 // Hoist ESM import — secretvm-verify is ESM-only, cache it at startup
@@ -46,30 +46,7 @@ let modelServerMap = {};
 function fetchModelsFromServer(serverKey) {
   const server = SERVERS[serverKey];
   if (!server) return Promise.resolve([]);
-  const url = new URL(`${server.url}/api/tags`);
-  return new Promise((resolve) => {
-    const options = {
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname,
-      method: "GET",
-      headers: { Authorization: `Basic ${API_KEY}` },
-    };
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve(parsed.models.map((m) => m.name));
-        } catch {
-          resolve([]);
-        }
-      });
-    });
-    req.on("error", () => resolve([]));
-    req.end();
-  });
+  return fetchModelsFromUrl(server.url);
 }
 
 async function buildModelMap() {
@@ -98,10 +75,12 @@ app.get("/api/models", async (_req, res) => {
   res.json(models);
 });
 
+// Discover models via the OpenAI-compatible /v1/models endpoint, which both
+// Ollama and vLLM servers expose: { data: [{ id }] }.
 function fetchModelsFromUrl(urlStr) {
   return new Promise((resolve) => {
     let url;
-    try { url = new URL(`${urlStr.replace(/\/$/, "")}/api/tags`); } catch { return resolve([]); }
+    try { url = new URL(`${urlStr.replace(/\/$/, "")}/v1/models`); } catch { return resolve([]); }
     const lib = url.protocol === "http:" ? require("http") : https;
     const options = {
       hostname: url.hostname,
@@ -114,7 +93,7 @@ function fetchModelsFromUrl(urlStr) {
       let data = "";
       res.on("data", (c) => (data += c));
       res.on("end", () => {
-        try { resolve(JSON.parse(data).models.map((m) => m.name)); } catch { resolve([]); }
+        try { resolve(JSON.parse(data).data.map((m) => m.id)); } catch { resolve([]); }
       });
     });
     req.on("error", () => resolve([]));
@@ -216,6 +195,57 @@ app.get("/api/attestation", async (req, res) => {
   }
 });
 
+// How many trailing chars of `s` (from index `from`) are a strict prefix of
+// `tag` — so we can hold back a possibly-split tag across stream chunks.
+function trailingPartial(s, from, tag) {
+  const max = Math.min(tag.length - 1, s.length - from);
+  for (let n = max; n > 0; n--) {
+    if (s.endsWith(tag.slice(0, n))) return n;
+  }
+  return 0;
+}
+
+// Stateful splitter that pulls inline <think>...</think> reasoning (emitted by
+// Ollama's OpenAI-compatible endpoint) out of the content stream. Returns
+// { content, thinking } for each chunk; tags may span chunk boundaries.
+function makeThinkSplitter() {
+  let inThink = false;
+  let carry = "";
+  return function (text) {
+    let s = carry + text;
+    carry = "";
+    let content = "";
+    let thinking = "";
+    let i = 0;
+    while (i < s.length) {
+      if (!inThink) {
+        const open = s.indexOf("<think>", i);
+        if (open === -1) {
+          const p = trailingPartial(s, i, "<think>");
+          content += s.slice(i, s.length - p);
+          carry = s.slice(s.length - p);
+          break;
+        }
+        content += s.slice(i, open);
+        i = open + "<think>".length;
+        inThink = true;
+      } else {
+        const close = s.indexOf("</think>", i);
+        if (close === -1) {
+          const p = trailingPartial(s, i, "</think>");
+          thinking += s.slice(i, s.length - p);
+          carry = s.slice(s.length - p);
+          break;
+        }
+        thinking += s.slice(i, close);
+        i = close + "</think>".length;
+        inThink = false;
+      }
+    }
+    return { content, thinking };
+  };
+}
+
 app.post("/api/chat", async (req, res) => {
   const { model, messages, think, serverUrl } = req.body;
 
@@ -237,13 +267,13 @@ app.post("/api/chat", async (req, res) => {
       const serverKey = getServerForModel(model);
       baseUrl = SERVERS[serverKey]?.url || SERVERS[DEFAULT_SERVER].url;
     }
-    const upstream = await fetch(`${baseUrl}/api/chat`, {
+    const upstream = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, messages, stream: true, think: !!think }),
+      body: JSON.stringify({ model, messages, stream: true }),
       signal: controller.signal,
     });
 
@@ -255,7 +285,16 @@ app.post("/api/chat", async (req, res) => {
 
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
+    const splitThink = makeThinkSplitter();
+    const showThinking = !!think;
     let buffer = "";
+
+    const finish = () => {
+      if (!res.writableEnded) {
+        res.write("data: [DONE]\n\n");
+        res.end();
+      }
+    };
 
     while (true) {
       const { done, value } = await reader.read();
@@ -265,19 +304,25 @@ app.post("/api/chat", async (req, res) => {
       const lines = buffer.split("\n");
       buffer = lines.pop();
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice("data:".length).trim();
+        if (payload === "[DONE]") return finish();
         try {
-          const parsed = JSON.parse(line);
-          const content = parsed?.message?.content || "";
-          const thinking = parsed?.message?.thinking || "";
-          if (content) res.write(`data: ${JSON.stringify({ content })}\n\n`);
-          if (thinking) res.write(`data: ${JSON.stringify({ thinking })}\n\n`);
-          if (parsed.done) {
-            res.write("data: [DONE]\n\n");
-            res.end();
-            return;
+          const parsed = JSON.parse(payload);
+          const delta = parsed?.choices?.[0]?.delta || {};
+          // vLLM/gpt-oss emits reasoning in a dedicated field.
+          if (delta.reasoning_content && showThinking) {
+            res.write(`data: ${JSON.stringify({ thinking: delta.reasoning_content })}\n\n`);
           }
+          // Ollama emits reasoning inline as <think>...</think> within content.
+          if (delta.content) {
+            const { content, thinking } = splitThink(delta.content);
+            if (content) res.write(`data: ${JSON.stringify({ content })}\n\n`);
+            if (thinking && showThinking) res.write(`data: ${JSON.stringify({ thinking })}\n\n`);
+          }
+          if (parsed?.choices?.[0]?.finish_reason) return finish();
         } catch {}
       }
     }
