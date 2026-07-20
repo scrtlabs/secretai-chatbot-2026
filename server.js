@@ -127,7 +127,11 @@ app.get("/api/attestation", async (req, res) => {
     // checkSecretVm(host, product, reloadAmdKds, checkProofOfCloud)
     const result = await checkSecretVm(server.attestHost, "", false, true);
 
-    const baseAttestUrl = `https://${server.attestHost}:${ATTEST_PORT}`;
+    // Link to the endpoint the verification actually used. GPU hosts now expose
+    // attestation on the same port as the OpenAI API (21434) rather than the
+    // standalone ATTEST_PORT, and the SDK resolves that for us — so trust its
+    // resolved URL and only fall back to the default port if it's missing.
+    const baseAttestUrl = result.report.attestation_url || `https://${server.attestHost}:${ATTEST_PORT}`;
 
     // Overall validity excludes proof_of_cloud (advisory) and absent GPU checks.
     // A check counts as failed only if explicitly false; missing == not applicable.
