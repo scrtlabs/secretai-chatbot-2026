@@ -736,7 +736,7 @@
       let attestQuery, label;
       if (info.serverUrl) {
         const host = new URL(info.serverUrl).hostname;
-        attestQuery = `host=${encodeURIComponent(host)}`;
+        attestQuery = `host=${encodeURIComponent(host)}&url=${encodeURIComponent(info.serverUrl)}`;
         label = `${model} on ${host}`;
       } else {
         attestQuery = `server=${encodeURIComponent(info.server)}`;

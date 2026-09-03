@@ -113,7 +113,9 @@ app.get("/api/proxy-models", async (req, res) => {
 app.get("/api/attestation", async (req, res) => {
   let server, key;
   if (req.query.host) {
-    server = { url: null, attestHost: req.query.host };
+    // Custom server: carry the full URL (with its port) so attestation links
+    // land on the same port the target machine serves its API on.
+    server = { url: req.query.url || null, attestHost: req.query.host };
     key = req.query.host;
   } else {
     key = req.query.server || (req.query.model ? getServerForModel(req.query.model) : DEFAULT_SERVER);
@@ -127,11 +129,22 @@ app.get("/api/attestation", async (req, res) => {
     // checkSecretVm(host, product, reloadAmdKds, checkProofOfCloud)
     const result = await checkSecretVm(server.attestHost, "", false, true);
 
-    // Link to the endpoint the verification actually used. GPU hosts now expose
-    // attestation on the same port as the OpenAI API (21434) rather than the
-    // standalone ATTEST_PORT, and the SDK resolves that for us — so trust its
-    // resolved URL and only fall back to the default port if it's missing.
-    const baseAttestUrl = result.report.attestation_url || `https://${server.attestHost}:${ATTEST_PORT}`;
+    // Attestation links. Target machines now expose attestation on the SAME
+    // port as their API endpoint (21434) rather than the standalone ATTEST_PORT.
+    // The API port is authoritative, so derive it from the server's own URL
+    // (works whether or not the host is currently reachable). Only when no URL
+    // is known (a bare host query) do we defer to the port the SDK resolved,
+    // and finally to the legacy ATTEST_PORT. The host is always attestHost so
+    // links hit the certificate's domain, not a raw IP.
+    let attestPort;
+    if (server.url) {
+      try { attestPort = new URL(server.url).port; } catch { /* fall through */ }
+    }
+    if (!attestPort && result.report.attestation_url) {
+      try { attestPort = new URL(result.report.attestation_url).port; } catch { /* fall through */ }
+    }
+    if (!attestPort) attestPort = ATTEST_PORT;
+    const baseAttestUrl = `https://${server.attestHost}:${attestPort}`;
 
     // Overall validity excludes proof_of_cloud (advisory) and absent GPU checks.
     // A check counts as failed only if explicitly false; missing == not applicable.
